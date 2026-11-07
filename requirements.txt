@@ -1,0 +1,6 @@
+torch
+transformers
+datasets
+rouge-score
+matplotlib
+gradio
