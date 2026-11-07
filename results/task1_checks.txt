@@ -1,0 +1,21 @@
+=== Task 1.1: check_starter.py ===
+SFT  train/val : 20000 500
+Pref train/val : 20000 1000
+Eval posts     : 300
+SFT batch     : (8, 397) prompt_lens [201, 247, 284, 272, 365, 313, 332, 241]
+Pref batch    : (8, 451) (8, 465)
+Prompt batch  : (8, 378) (left-padded)
+
+=== Task 1.3: token_logprobs + summary_mask (base model, sft_train[:4]) ===
+1. logprobs shape : (4, 480) | expected (4, 480)
+   mask shape     : (4, 480)
+2. all logprobs <= 0: True
+3. mask sums: [39, 47, 47, 27] | expected [39, 47, 47, 27]
+4. decoded summary tokens match summary + EOS:
+   row 0: True
+   row 1: True
+   row 2: True
+   row 3: True
+
+Row 0, decoded where mask = 1:
+' Me and my sister were going to the park, put my sister in her carseat, left her there for thirty minutes, mom saved her from my ignorance, got grounded for a month.<|endoftext|>'
