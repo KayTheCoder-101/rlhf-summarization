@@ -23,7 +23,7 @@ LR = 5e-5
 MAX_GRAD_NORM = 1.0
 OUT_DIR = os.path.join(ROOT, "checkpoints", "sft")
 RESULTS_DIR = os.path.join(ROOT, "results")
-DEBUG = False
+DEBUG = True
 LOG_EVERY = 5 if DEBUG else 250
 
 def compute_loss(model,batch,device):
@@ -62,7 +62,8 @@ def main():
 
     sample_posts=eval_posts[:5]
 
-    model=load_causal_lm()
+    model=load_causal_lm().float()
+    print(model.dtype)
     device=next(model.parameters()).device
     optimizer=torch.optim.AdamW(model.parameters(),lr=LR)
 
