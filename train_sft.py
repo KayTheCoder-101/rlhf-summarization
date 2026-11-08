@@ -18,6 +18,7 @@ from common import token_logprobs,summary_mask,generate_summaries
 
 
 BATCH_SIZE = 16
+MICRO_BATCH = 8
 LR = 5e-5
 MAX_GRAD_NORM = 1.0
 OUT_DIR = os.path.join(ROOT, "checkpoints", "sft")
@@ -78,16 +79,32 @@ def main():
     start_time=time.time()
 
     for batch in train_loader:
-        nll_sum,n_tok=compute_loss(model,batch,device)
-        loss=nll_sum/n_tok
+        #move the full batch to the device
+        batch={k: v.to(device) if hasattr(v,"to") else v for k,v in batch.items()}
+
+        #normalize by the target tokens of the FULL batch, not each micro-batch
+        total_tok=summary_mask(batch["attention_mask"],batch["prompt_lens"]).sum().item()
+        if total_tok==0:
+            continue
 
         optimizer.zero_grad()
-        loss.backward()
+        batch_nll=0.0
+
+        #-----------micro-batch gradient accumulation
+        full_len=len(batch["input_ids"])
+        for start in range(0,full_len,MICRO_BATCH):
+            end=min(start+MICRO_BATCH,full_len)
+            micro={k: v[start:end] for k,v in batch.items()}
+
+            nll_sum,n_tok=compute_loss(model,micro,device)
+            (nll_sum/total_tok).backward()
+            batch_nll+=nll_sum.item()
+
         torch.nn.utils.clip_grad_norm_(model.parameters(),MAX_GRAD_NORM)
         optimizer.step()
 
         step+=1
-        running.append(loss.item())
+        running.append(batch_nll/total_tok)
 
         last_step=(step==len(train_loader))
         if (step %LOG_EVERY==0)or last_step:
