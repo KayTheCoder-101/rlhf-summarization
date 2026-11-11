@@ -61,3 +61,6 @@ def generate_summaries(model,tok,examples,max_new_tokens=48):
         summaries.append(clean_summary)
 
     return summaries
+
+def sequence_logprobs(model,ids,mask,prompt_lens):
+    return (token_logprobs(model,ids,mask)*summary_mask(mask,prompt_lens)).sum(dim=1)
