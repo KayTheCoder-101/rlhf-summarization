@@ -62,8 +62,7 @@ def main():
     g.manual_seed(42)
 
     tok=load_tokenizer(SFT_DIR)
-    pref_train=load_preference_splits(tok)
-    pref_eval=load_preference_splits(tok)
+    pref_train,pref_eval=load_preference_splits(tok)
     collate=partial(collate_pref,pad_id=tok.pad_token_id)
 
     Loader_train=DataLoader(pref_train,batch_size=BATCH_PAIRS,shuffle=True,generator=g,collate_fn=collate)
@@ -143,7 +142,7 @@ def main():
             with open(os.path.join(RESULTS_DIR, "dpo_log.json"), "w") as f:
                 json.dump(logs,f,indent=2)
 
-        if DEBUG and step == 10:
+        if DEBUG and step==10:
             break
 
     #saving checkpoints
