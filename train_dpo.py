@@ -25,7 +25,7 @@ BETA=0.1
 SFT_DIR = os.environ.get("SFT_DIR", os.path.join(ROOT, "checkpoints", "sft"))
 OUT_DIR = os.path.join(ROOT, "checkpoints", "dpo")
 RESULTS_DIR = os.path.join(ROOT, "results")
-DEBUG=True
+DEBUG=False
 LOG_EVERY=5 if DEBUG else 250
 
 def pair_logprobs(model,batch,device):
