@@ -63,7 +63,7 @@ def load_sft_splits(tok):
 def load_preference_splits(tok):
     ds = load_dataset(PREF_DATA)
     train = _sample_valid(ds["train"],  N_PREF_TRAIN, tok, _make_pref, SEED)
-    val   = _sample_valid(ds["valid1"], N_PREF_VAL,   tok, _make_pref, SEED)
+    val   = _sample_valid(ds["valid"], N_PREF_VAL,   tok, _make_pref, SEED)
     return train, val
 
 def load_eval_posts(tok):
