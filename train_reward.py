@@ -28,7 +28,7 @@ class RewardModel(nn.Module):
 
     def forward(self, inp_ids, attn_mask):
         position_ids = torch.clamp(torch.cumsum(attn_mask, dim=1) - 1, min=0) # input ids: (B, L)
-        outs = self.transformer(input_ids=inp_ids,attention_mask=attn_mask,position_ids=position_ids)
+        outs = self.transformer(input_ids=inp_ids,attention_mask=attn_mask,position_ids=position_ids,use_cache=False)
         hidden = outs.last_hidden_state # (B, L, H)
         lens = attn_mask.sum(dim=1)
         last_tok_idx = lens - 1
@@ -105,14 +105,22 @@ def main():
     losses, accs = [], []
     step = 0
     for batch in train_loader:
-        loss, acc = compute_loss_and_acc(model, batch, device)
         optim.zero_grad()
-        loss.backward()
+        n_pairs = len(batch["chosen_ids"])
+        batch_loss, batch_acc = 0.0, 0.0
+        for start in range(0, n_pairs, 2):
+            micro = {k: v[start:start+2] for k, v in batch.items()}
+            loss, acc = compute_loss_and_acc(model, micro, device)
+            weight = len(micro["chosen_ids"]) / n_pairs
+            (loss * weight).backward()
+            batch_loss += loss.item() * weight
+            batch_acc += acc.item() * weight
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optim.step()
         step += 1
-        losses.append(loss.item())
-        accs.append(acc.item())
+        losses.append(batch_loss)
+        accs.append(batch_acc)
 
         if step % 250 == 0:
             train_loss = sum(losses) / len(losses)

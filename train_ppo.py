@@ -29,7 +29,7 @@ class PolicyWithValue(nn.Module):
 
     def forward(self, inp_ids, attn_msk):
         position_ids=torch.clamp(torch.cumsum(attn_msk,dim=1)-1, min=0)
-        outs = self.lm(input_ids=inp_ids, attention_mask=attn_msk, position_ids=position_ids, output_hidden_states=True)
+        outs = self.lm(input_ids=inp_ids, attention_mask=attn_msk, position_ids=position_ids, output_hidden_states=True, use_cache=False)
         logits = outs.logits # (B, L, V)
         hidden = outs.hidden_states[-1] # (B, L, H)
         values = self.value_head(hidden).squeeze(-1) # (B,L)
@@ -140,7 +140,7 @@ def main():
     LR = 1e-5
     K_EPOCHS = 4
     TTL_ITERS = 200
-    MICRO_BATCH = 8
+    MICRO_BATCH = 4
 
     SFT_DIR = os.path.join(ROOT, "checkpoints", "sft")
     REWARD_DIR = os.path.join(ROOT, "checkpoints", "reward")
@@ -163,6 +163,7 @@ def main():
     rm.eval()
     for p in rm.parameters():
         p.requires_grad_(False)
+    print("[Check] Ref frozen:", all(not p.requires_grad for p in ref.parameters()), "| RM frozen:", all(not p.requires_grad for p in rm.parameters()))
     
     optim = torch.optim.AdamW(policy.parameters(), lr=LR)
     sft_train, _ = load_sft_splits(tok)
@@ -209,6 +210,9 @@ def main():
                 new_lp, new_val, entropy= evaluate_sequence(policy,sub_ids,attn_mask=sub_mask)
                 loss, c_frac, loss_dict = compute_ppo_loss(new_lp, sub_old_lp, new_val, sub_R, sub_A, entropy, sub_m,
                     clip_eps=CLIP_EPS, c_v=C_V, c_h=C_H)
+                if i == 1 and epoch == 0 and start == 0:
+                    ratio_err = ((torch.exp(new_lp - sub_old_lp) - 1.0).abs() * sub_m).max().item()
+                    print(f"[Check] Iter 1 Epoch 0: max |r_t(theta) - 1| = {ratio_err:.6e}, clip_frac = {c_frac:.4f}")
                 
                 weight = sub_m.sum() / mask.sum()
                 (loss * weight).backward()
