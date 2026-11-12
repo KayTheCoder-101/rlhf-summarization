@@ -18,16 +18,6 @@ from data import load_preference_splits
 from batching import collate_pref
 from common import sequence_logprobs
 
-BATCH_PAIRS=8
-MICRO_PAIRS=2
-LR=2e-6
-BETA=0.1
-SFT_DIR = os.environ.get("SFT_DIR", os.path.join(ROOT, "checkpoints", "sft"))
-OUT_DIR = os.path.join(ROOT, "checkpoints", "dpo")
-RESULTS_DIR = os.path.join(ROOT, "results")
-DEBUG=False
-LOG_EVERY=5 if DEBUG else 250
-
 def pair_logprobs(model,batch,device):
     c_ids=batch["chosen_ids"].to(device)
     c_mask=batch["chosen_mask"].to(device)
@@ -40,7 +30,7 @@ def pair_logprobs(model,batch,device):
 
     return lp_chosen,lp_rejected
 
-def validate(policy,val_loader,ref_cache,device):
+def validate(policy,val_loader,ref_cache,device,beta):
     policy.eval()
     t_loss=0
     correct=0
@@ -49,7 +39,7 @@ def validate(policy,val_loader,ref_cache,device):
         for i,batch in enumerate(val_loader):
             pc,pr=pair_logprobs(policy,batch,device)
             rc,rr=ref_cache[i]
-            margin=BETA*((pc-rc)-(pr-rr))
+            margin=beta*((pc-rc)-(pr-rr))
             t_loss+=(-F.logsigmoid(margin)).sum().item()
             correct+=(margin > 0).sum().item()
             n+=len(margin)
@@ -61,24 +51,33 @@ def main():
     g=torch.Generator()
     g.manual_seed(42)
 
-    tok=load_tokenizer(SFT_DIR)
+    beta=0.1
+    debug=False
+    log_every=5 if debug else 250
+    sft_dir=os.environ.get("SFT_DIR",os.path.join(ROOT,"checkpoints","sft"))
+    out_dir="/content/drive/MyDrive/dpo_fp32/dpo"
+    results_dir="/content/drive/MyDrive/dpo_fp32/results"
+    os.makedirs(out_dir,exist_ok=True)
+    os.makedirs(results_dir,exist_ok=True)
+
+    tok=load_tokenizer(sft_dir)
     pref_train,pref_eval=load_preference_splits(tok)
     collate=partial(collate_pref,pad_id=tok.pad_token_id)
 
-    Loader_train=DataLoader(pref_train,batch_size=BATCH_PAIRS,shuffle=True,generator=g,collate_fn=collate)
-    loader_val=DataLoader(pref_eval,batch_size=BATCH_PAIRS,shuffle=False,collate_fn=collate)
+    Loader_train=DataLoader(pref_train,batch_size=8,shuffle=True,generator=g,collate_fn=collate)
+    loader_val=DataLoader(pref_eval,batch_size=8,shuffle=False,collate_fn=collate)
 
-    policy=load_causal_lm(SFT_DIR).float()
+    policy=load_causal_lm(sft_dir).float()
     policy.train()
     device=next(policy.parameters()).device
 
-    ref=load_causal_lm(SFT_DIR).float()
+    ref=load_causal_lm(sft_dir).float()
     ref.eval()
     for p in ref.parameters():
         p.requires_grad_(False)
     print("Reference frozen:",all(not p.requires_grad for p in ref.parameters()))
 
-    optimizer=torch.optim.AdamW(policy.parameters(),lr=LR)
+    optimizer=torch.optim.AdamW(policy.parameters(),lr=2e-6)
 
     #caching ref model
     ref_cache=[]
@@ -88,7 +87,7 @@ def main():
             ref_cache.append((rc,rr))
     
     #validating once before training
-    val_loss, val_acc = validate(policy,loader_val,ref_cache,device)
+    val_loss, val_acc = validate(policy,loader_val,ref_cache,device,beta)
     logs = []
     logs.append({"step": 0,"val_loss": val_loss,"val_acc": val_acc})
     print(f"Step 0 | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
@@ -104,15 +103,15 @@ def main():
         batch_loss=0.0
         batch_correct=0
 
-        for start in range(0, n_pairs, MICRO_PAIRS):
-            end=start+MICRO_PAIRS
+        for start in range(0, n_pairs, 2):
+            end=start+2
             micro={k:v[start:end] for k, v in batch.items()}
 
             with torch.no_grad():
                 rc,rr=pair_logprobs(ref,micro,device)
 
             pc,pr=pair_logprobs(policy,micro,device)
-            margin=BETA*((pc-rc)-(pr-rr))
+            margin=beta*((pc-rc)-(pr-rr))
             loss_sum=-F.logsigmoid(margin).sum()
             (loss_sum / n_pairs).backward()
 
@@ -126,10 +125,10 @@ def main():
 
         running.append(batch_loss / n_pairs)
 
-        if step%LOG_EVERY == 0:
+        if step%log_every == 0:
             train_loss=sum(running)/len(running)
             running=[]
-            val_loss,val_acc=validate(policy,loader_val,ref_cache, device)
+            val_loss,val_acc=validate(policy,loader_val,ref_cache,device,beta)
             elapsed=time.time()- t0
 
             logs.append({"step": step,"train_loss": train_loss,"val_loss": val_loss,"val_acc": val_acc,})
@@ -139,15 +138,15 @@ def main():
                 f"Time: {elapsed:.1f}s"
             )
 
-            with open(os.path.join(RESULTS_DIR, "dpo_log.json"), "w") as f:
+            with open(os.path.join(results_dir, "dpo_log.json"), "w") as f:
                 json.dump(logs,f,indent=2)
 
-        if DEBUG and step==10:
+        if debug and step==10:
             break
 
     #saving checkpoints
-    policy.save_pretrained(OUT_DIR)
-    tok.save_pretrained(OUT_DIR)
+    policy.save_pretrained(out_dir)
+    tok.save_pretrained(out_dir)
     #saving minutes
     minutes = (time.time() - t0) / 60.0
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
@@ -156,7 +155,7 @@ def main():
         "gpu": gpu_name,
         "history": logs,
     }
-    with open(os.path.join(RESULTS_DIR, "dpo_log.json"), "w") as f:
+    with open(os.path.join(results_dir, "dpo_log.json"), "w") as f:
         json.dump(log_payload, f, indent=2)
 
     #plottingg=--------
@@ -186,7 +185,7 @@ def main():
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "fig4_dpo.png"), dpi=200)
+    plt.savefig(os.path.join(results_dir, "fig4_dpo.png"), dpi=200)
     plt.close(fig)
 
 

@@ -16,16 +16,6 @@ from data import load_sft_splits, load_eval_posts
 from batching import collate_sft
 from common import token_logprobs,summary_mask,generate_summaries
 
-
-BATCH_SIZE = 16
-MICRO_BATCH = 8
-LR = 5e-5
-MAX_GRAD_NORM = 1.0
-OUT_DIR = os.path.join(ROOT, "checkpoints", "sft")
-RESULTS_DIR = os.path.join(ROOT, "results")
-DEBUG = False
-LOG_EVERY = 5 if DEBUG else 250
-
 def compute_loss(model,batch,device):
     ids=batch["input_ids"].to(device)
     mask=batch["attention_mask"].to(device)
@@ -53,19 +43,25 @@ def val_loss(model, loader, device):
 
 def main():
     torch.manual_seed(42)
+
+    debug=False
+    log_every=5 if debug else 250
+    out_dir="/content/drive/MyDrive/sft_fp32/sft"
+    results_dir="/content/drive/MyDrive/sft_fp32/results"
+
     tok=load_tokenizer()
     sft_train,sft_val=load_sft_splits(tok)
     eval_posts=load_eval_posts(tok)
     collate=partial(collate_sft,pad_id=tok.pad_token_id)
-    train_loader=DataLoader(sft_train,batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate)
-    val_loader=DataLoader(sft_val,batch_size=BATCH_SIZE,shuffle=False,collate_fn=collate)
+    train_loader=DataLoader(sft_train,batch_size=16,shuffle=True,collate_fn=collate)
+    val_loader=DataLoader(sft_val,batch_size=16,shuffle=False,collate_fn=collate)
 
     sample_posts=eval_posts[:5]
 
     model=load_causal_lm().float()
     print(model.dtype)
     device=next(model.parameters()).device
-    optimizer=torch.optim.AdamW(model.parameters(),lr=LR)
+    optimizer=torch.optim.AdamW(model.parameters(),lr=5e-5)
 
     model.eval()
     before_summaries=generate_summaries(model,tok,sample_posts)
@@ -93,22 +89,22 @@ def main():
 
         #-----------micro-batch gradient accumulation
         full_len=len(batch["input_ids"])
-        for start in range(0,full_len,MICRO_BATCH):
-            end=min(start+MICRO_BATCH,full_len)
+        for start in range(0,full_len,8):
+            end=min(start+8,full_len)
             micro={k: v[start:end] for k,v in batch.items()}
 
             nll_sum,n_tok=compute_loss(model,micro,device)
             (nll_sum/total_tok).backward()
             batch_nll+=nll_sum.item()
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(),MAX_GRAD_NORM)
+        torch.nn.utils.clip_grad_norm_(model.parameters(),1.0)
         optimizer.step()
 
         step+=1
         running.append(batch_nll/total_tok)
 
         last_step=(step==len(train_loader))
-        if (step %LOG_EVERY==0)or last_step:
+        if (step %log_every==0)or last_step:
             train_loss=sum(running)/len(running) if running else 0.0
             running=[]
 
@@ -119,20 +115,20 @@ def main():
             elapsed_minutes=(time.time()-start_time)/60.0
             print(f"Step {step} | Train Loss: {train_loss:.4f} | Val Loss: {v:.4f} | Time: {elapsed_minutes:.2f} min")
 
-            os.makedirs(RESULTS_DIR,exist_ok=True)
-            log_path=os.path.join(RESULTS_DIR,"sft_log.json")
+            os.makedirs(results_dir,exist_ok=True)
+            log_path=os.path.join(results_dir,"sft_log.json")
             with open(log_path,"w") as f:
                 json.dump(log,f,indent=4)
-        if DEBUG and step == 10:
+        if debug and step == 10:
             break
 
     elapsed_minutes=(time.time()-start_time)/60.0
-    os.makedirs(OUT_DIR,exist_ok=True)
-    model.save_pretrained(OUT_DIR)
-    tok.save_pretrained(OUT_DIR)
+    os.makedirs(out_dir,exist_ok=True)
+    model.save_pretrained(out_dir)
+    tok.save_pretrained(out_dir)
 
     run_metadata = {"minutes": elapsed_minutes,"gpu":torch.cuda.get_device_name(0)if torch.cuda.is_available() else "CPU","log":log}
-    metadata_path = os.path.join(RESULTS_DIR, "sft_log.json")
+    metadata_path = os.path.join(results_dir, "sft_log.json")
     with open(metadata_path, "w") as f:
         json.dump(run_metadata,f,indent=4)
 
@@ -140,11 +136,11 @@ def main():
     model.eval()
     after_summaries=generate_summaries(model, tok, sample_posts)
 
-    samples_path = os.path.join(RESULTS_DIR, "sft_samples.md")
+    samples_path = os.path.join(results_dir, "sft_samples.md")
     with open(samples_path, "w") as f:
         for i, ex in enumerate(sample_posts):
             f.write(f"## Sample Post {i + 1}\n\n")
-            f.write(f"### Prompt Context (Last 500 chars):\n...{ex['prompt'][-500:]}\n\n")
+            f.write(f"###Prompt Context (Last 500 chars):\n...{ex['prompt'][-500:]}\n\n")
             f.write(f"### Ground Truth Target Summary:\n{ex['summary']}\n\n")
             f.write(f"### Generation Before SFT:\n{before_summaries[i]}\n\n")
             f.write(f"### Generation After SFT:\n{after_summaries[i]}\n\n")
@@ -164,7 +160,7 @@ def main():
     plt.legend()
     plt.grid(True)
     
-    fig_path = os.path.join(RESULTS_DIR, "fig1_sft_loss.png")
+    fig_path = os.path.join(results_dir, "fig1_sft_loss.png")
     plt.savefig(fig_path, bbox_inches="tight")
     plt.close()
 
