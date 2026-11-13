@@ -1,0 +1,23 @@
+{
+  "SFT": {
+    "mean_reward": 3.9029,
+    "win_rate_vs_sft": null,
+    "kl_to_sft": 0.0,
+    "mean_length": 31.75,
+    "rouge_l": 0.2592
+  },
+  "PPO": {
+    "mean_reward": 5.0531,
+    "win_rate_vs_sft": 0.8733333333333333,
+    "kl_to_sft": 13.7418,
+    "mean_length": 35.33,
+    "rouge_l": 0.2477
+  },
+  "DPO": {
+    "mean_reward": 4.5225,
+    "win_rate_vs_sft": 0.7666666666666667,
+    "kl_to_sft": 2.9443,
+    "mean_length": 38.79,
+    "rouge_l": 0.2476
+  }
+}
