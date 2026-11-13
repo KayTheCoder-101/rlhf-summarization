@@ -142,4 +142,4 @@ with gr.Blocks(title="SFT vs PPO vs DPO") as demo:
     )
 
 if __name__=="__main__":
-    demo.launch()
+    demo.launch(share=True)
